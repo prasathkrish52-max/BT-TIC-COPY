@@ -41,6 +41,7 @@ router.get('/settings', verifyToken, adminController.getPublicSettings);
 
 // 3. Admin Routes (Protected by verifyToken & isAdmin)
 router.get('/admin/stats', verifyToken, isAdmin, adminController.getStats);
+router.get('/admin/stats/analytics', verifyToken, isAdmin, adminController.getAnalyticsStats);
 router.get('/admin/students', verifyToken, isAdmin, adminController.listStudents);
 router.get('/admin/students/:id', verifyToken, isAdmin, adminController.getStudentDetail);
 router.put('/admin/students/:id/admin-fields', verifyToken, isAdmin, adminController.updateAdminColumns);
@@ -59,8 +60,8 @@ router.post('/admin/attendance/upload', verifyToken, isAdmin, uploadAttendance.s
 router.post('/admin/attendance/clear', verifyToken, isAdmin, attendanceController.clearAttendance);
 
 // 4. Admin Reports Routes
-router.get('/admin/reports/full', verifyToken, isAdmin, reportController.fullReport);
-router.get('/admin/reports/filtered', verifyToken, isAdmin, reportController.filteredReport);
+router.get('/admin/reports/blossom-final', verifyToken, isAdmin, reportController.blossomFinalReport);
+router.get('/admin/reports/overall', verifyToken, isAdmin, reportController.overallReport);
 router.get('/admin/reports/dropout', verifyToken, isAdmin, reportController.dropoutReport);
 router.get('/admin/reports/low-attendance', verifyToken, isAdmin, reportController.monthlyLowAttendanceReport);
 

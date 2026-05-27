@@ -3,13 +3,14 @@ const { google } = require('googleapis');
 const NodeCache = require('node-cache');
 const adminCache = new NodeCache({ stdTTL: 60 }); // Default TTL: 60 seconds
 exports.adminCache = adminCache;
+let previousAnalyticsCounts = null; // Tracks previous analytics counts for diff logging
 
 // 1. List students with pagination, search, and filtering
 exports.listStudents = async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 50;
   const offset = (page - 1) * limit;
-  const { utNo, name, phoneNo, district, bank, beneficiaryName } = req.query;
+  const { utNo, name, phoneNo, district, bank, beneficiaryName, studentType, courseName, batch } = req.query;
 
   try {
     let query = supabase.from('students').select('*', { count: 'exact' });
@@ -20,6 +21,9 @@ exports.listStudents = async (req, res) => {
     if (district) query = query.eq('district', district);
     if (bank) query = query.eq('bank_name', bank);
     if (beneficiaryName) query = query.ilike('beneficiary_name', `%${beneficiaryName}%`);
+    if (studentType) query = query.eq('student_type', studentType);
+    if (courseName) query = query.eq('course_name', courseName);
+    if (batch) query = query.eq('batch', batch);
 
     query = query.order('blossom_trust_amount', { ascending: false });
     query = query.range(offset, offset + limit - 1);
@@ -101,7 +105,9 @@ exports.updateAdminColumns = async (req, res) => {
     dropout_reason, dropout_date, dropout_status,
     lowAlternanceReason, lowAlternanceHours,
     attendancePercentage, lowAttendanceStatus, lastAttendanceMonth,
-    blossomTrustAmount
+    blossomTrustAmount, courseName, batch,
+    courseSpecialization, employmentStatus, otherStatus, email,
+    courseCompletionStatus
   } = req.body;
 
   try {
@@ -120,7 +126,44 @@ exports.updateAdminColumns = async (req, res) => {
     if (adminCol2Val !== undefined) updateData.admin_col2_val = adminCol2Val;
     if (adminCol3Val !== undefined) updateData.admin_col3_val = parseFloat(adminCol3Val) || 0;
     if (blossomTrustAmount !== undefined) updateData.blossom_trust_amount = parseFloat(blossomTrustAmount) || 0;
+    if (courseName !== undefined) {
+      updateData.course_name = courseName === '' ? null : courseName;
+    }
+    if (batch !== undefined) {
+      updateData.batch = batch;
+      const match = batch.match(/\d{4}/);
+      if (match) {
+        updateData.batch_year = parseInt(match[0], 10);
+      }
+    }
     if (dropout_reason !== undefined) updateData.dropout_reason = dropout_reason;
+    if (courseSpecialization !== undefined) updateData.course_specialization = courseSpecialization;
+    if (employmentStatus !== undefined) updateData.employment_status = employmentStatus;
+    if (otherStatus !== undefined) updateData.other_status = otherStatus;
+    if (courseCompletionStatus !== undefined) {
+      updateData.course_completion_status = courseCompletionStatus === '' ? null : courseCompletionStatus;
+    }
+    if (email !== undefined) {
+      if (email === '') {
+        updateData.email = null;
+      } else {
+        const tempEmail = email.trim().toLowerCase();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(tempEmail)) {
+          return res.status(400).json({ message: 'Invalid email address format.' });
+        }
+        const { data: existingEmail } = await supabase
+          .from('students')
+          .select('id')
+          .eq('email', tempEmail)
+          .neq('id', id)
+          .maybeSingle();
+        if (existingEmail) {
+          return res.status(400).json({ message: 'This email address is already in use.' });
+        }
+        updateData.email = tempEmail;
+      }
+    }
     if (dropout_date !== undefined) updateData.dropout_date = dropout_date;
     if (dropout_status !== undefined) {
       updateData.dropout_status = 
@@ -165,6 +208,9 @@ exports.updateAdminColumns = async (req, res) => {
       .eq('id', id);
 
     if (updateError) throw updateError;
+
+    // Invalidate cached dashboard stats so next loadStats() call returns fresh data
+    adminCache.del('dashboard_stats');
 
     const { data: updatedStudent } = await supabase
       .from('students')
@@ -442,9 +488,252 @@ exports.syncGoogleSheets = async (req, res) => {
   }
 };
 
-// 10. Dashboard Stats — efficient count queries (no binary report generation)
+// 10a. Date-Filterable Analytics Stats — for 3D Pie Chart dashboard widget
+// NOTE: This endpoint is intentionally NOT cached. Every request hits the DB live.
+exports.getAnalyticsStats = async (req, res) => {
+  const { year, month } = req.query; // month: 1-12 (optional), year: e.g. 2026 (optional)
+
+  // Force no caching at every layer (browser, CDN, proxy)
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('X-Analytics-Timestamp', Date.now().toString());
+
+  try {
+    // Build date range filter
+    let dateFilter = null;
+    if (year) {
+      const y = parseInt(year, 10);
+      if (month) {
+        const m = parseInt(month, 10);
+        const start = new Date(y, m - 1, 1).toISOString();
+        const end   = new Date(y, m, 0, 23, 59, 59, 999).toISOString();
+        dateFilter = { start, end };
+      } else {
+        dateFilter = {
+          start: new Date(y, 0, 1).toISOString(),
+          end:   new Date(y, 11, 31, 23, 59, 59, 999).toISOString()
+        };
+      }
+    }
+
+    const applyDate = (q) => {
+      if (!dateFilter) return q;
+      return q.gte('created_at', dateFilter.start).lte('created_at', dateFilter.end);
+    };
+
+    // Always build a fresh Supabase query — never use cached variables
+    const base = () => supabase.from('students').select('*', { count: 'exact', head: true });
+
+    // ── Run all counts in parallel — each is a fresh, independent DB query ──
+    // NOTE: course_completion_status "Not Started" bucket uses three separate
+    // queries (null + 'Not Started' + 'Not Updated') then sums client-side to
+    // avoid Supabase .or() issues with space-containing values.
+    // IMPORTANT: Promise.all result order MUST exactly match destructuring variable order.
+const [
+      { count: totalCount,            error: e0  },
+      { count: dropoutCount,          error: e1  },
+      { count: activeCount,           error: e2  },
+
+      // ── Course Completion Status ──
+      { count: completedCount,        error: e3  },
+      { count: inProgressCount,       error: e4  },
+      { count: notStartedCount,       error: e5  },   // 'Not Started'
+      { count: notUpdatedCount,       error: e5b },   // 'Not Updated'
+      { count: nullCompletionCount,   error: e5c },   // NULL
+
+      // ── Employment Status ──
+      { count: softwareEmpCount,      error: e6  },
+      { count: otherEmpCount,         error: e7  },
+
+      // ── Other Status ──
+      { count: higherStudyCount,      error: e8  },
+      { count: unemploymentCount,     error: e9  },
+      { count: foreignCount,          error: e10 },
+
+      // ── Student Type ──
+      { count: blossomCount,          error: e11 },
+      { count: nonBlossomCount,       error: e12 },
+
+      // ── Course Specialization ──
+      { count: fullStackSpecCount,    error: e13 },
+      { count: frontEndSpecCount,     error: e14 }
+    ] = await Promise.all([
+      // Total & Dropout Status
+      applyDate(base()),
+      applyDate(base().eq('dropout_status', true)),
+      applyDate(base().eq('dropout_status', false)),
+
+      // Course Completion — each value as its own query (avoids .or() space issues)
+      applyDate(base().eq('course_completion_status', 'Completed')),
+      applyDate(base().eq('course_completion_status', 'In Progress')),
+      applyDate(base().eq('course_completion_status', 'Not Started')),
+      applyDate(base().eq('course_completion_status', 'Not Updated')),
+      applyDate(base().is('course_completion_status', null)),
+
+      // Employment Status
+      applyDate(base().eq('employment_status', 'Software Industry Employment')),
+      applyDate(base().eq('employment_status', 'Other Industry Employment')),
+
+      // Other Status
+      applyDate(base().eq('other_status', 'Higher Study')),
+      applyDate(base().eq('other_status', 'Unemployment')),
+      applyDate(base().eq('other_status', 'Foreign')),
+
+      // Student Type
+      applyDate(base().eq('student_type', 'blossom')),
+      applyDate(base().eq('student_type', 'non_blossom')),
+
+      // Course Specialization
+      applyDate(base().eq('course_specialization', 'Full Stack Development')),
+      applyDate(base().eq('course_specialization', 'Front End'))
+    ]);
+
+    // Validate each count to avoid undefined/null values and log warnings if needed
+    const ensureNumber = (name, val) => {
+      if (val == null) {
+        console.warn(`${name} returned null/undefined, defaulting to 0`);
+        return 0;
+      }
+      return val;
+    };
+
+    const totalCountN = ensureNumber('totalCount', totalCount);
+    const dropoutCountN = ensureNumber('dropoutCount', dropoutCount);
+    const activeCountN = ensureNumber('activeCount', activeCount);
+    const completedCountN = ensureNumber('completedCount', completedCount);
+    const inProgressCountN = ensureNumber('inProgressCount', inProgressCount);
+    const notStartedCountN = ensureNumber('notStartedCount', notStartedCount);
+    const notUpdatedCountN = ensureNumber('notUpdatedCount', notUpdatedCount);
+    const nullCompletionCountN = ensureNumber('nullCompletionCount', nullCompletionCount);
+    const softwareEmpCountN = ensureNumber('softwareEmpCount', softwareEmpCount);
+    const otherEmpCountN = ensureNumber('otherEmpCount', otherEmpCount);
+    const higherStudyCountN = ensureNumber('higherStudyCount', higherStudyCount);
+    const unemploymentCountN = ensureNumber('unemploymentCount', unemploymentCount);
+    const foreignCountN = ensureNumber('foreignCount', foreignCount);
+    const blossomCountN = ensureNumber('blossomCount', blossomCount);
+    const nonBlossomCountN = ensureNumber('nonBlossomCount', nonBlossomCount);
+    const fullStackSpecCountN = ensureNumber('fullStackSpecCount', fullStackSpecCount);
+    const frontEndSpecCountN = ensureNumber('frontEndSpecCount', frontEndSpecCount);
+
+    // Aggregate "not started" bucket using validated counts
+    const notStartedTotalN = (notStartedCountN || 0) + (notUpdatedCountN || 0) + (nullCompletionCountN || 0);
+
+    // Log raw counts for debugging (server logs only)
+    console.log('RAW ANALYTICS COUNTS:', {
+      totalCount: totalCountN,
+      dropoutCount: dropoutCountN,
+      activeCount: activeCountN,
+      completedCount: completedCountN,
+      inProgressCount: inProgressCountN,
+      notStartedCount: notStartedCountN,
+      notUpdatedCount: notUpdatedCountN,
+      nullCompletionCount: nullCompletionCountN,
+      softwareEmpCount: softwareEmpCountN,
+      otherEmpCount: otherEmpCountN,
+      higherStudyCount: higherStudyCountN,
+      unemploymentCount: unemploymentCountN,
+      foreignCount: foreignCountN,
+      blossomCount: blossomCountN,
+      nonBlossomCount: nonBlossomCountN,
+      fullStackSpecCount: fullStackSpecCountN,
+      frontEndSpecCount: frontEndSpecCountN,
+      notStartedTotal: notStartedTotalN
+    });
+
+    // Store previous counts for diff logging (only server logs)
+    if (typeof previousAnalyticsCounts !== 'undefined') {
+      const diffs = {};
+      const keys = Object.keys({ totalCountN, dropoutCountN, activeCountN, completedCountN, inProgressCountN, notStartedTotalN, softwareEmpCountN, otherEmpCountN, higherStudyCountN, unemploymentCountN, foreignCountN, blossomCountN, nonBlossomCountN, fullStackSpecCountN, frontEndSpecCountN });
+      keys.forEach(k => {
+        if (previousAnalyticsCounts && previousAnalyticsCounts[k] !== undefined && previousAnalyticsCounts[k] !== eval(k)) {
+          diffs[k] = { previous: previousAnalyticsCounts[k], current: eval(k) };
+        }
+      });
+      if (Object.keys(diffs).length) console.log('Analytics count changes since last request:', diffs);
+    }
+    previousAnalyticsCounts = {
+      totalCountN,
+      dropoutCountN,
+      activeCountN,
+      completedCountN,
+      inProgressCountN,
+      notStartedTotalN,
+      softwareEmpCountN,
+      otherEmpCountN,
+      higherStudyCountN,
+      unemploymentCountN,
+      foreignCountN,
+      blossomCountN,
+      nonBlossomCountN,
+      fullStackSpecCountN,
+      frontEndSpecCountN
+    };
+
+    // Collect query errors into an array for reporting
+    const queryErrors = [];
+    const errorList = [e0, e1, e2, e3, e4, e5, e5b, e5c, e6, e7, e8, e9, e10, e11, e12, e13, e14];
+    errorList.forEach(err => { if (err) queryErrors.push(err); });
+    if (queryErrors.length > 0) {
+      console.warn('getAnalyticsStats: some sub-queries had errors:', queryErrors);
+    }
+
+    // Return response using validated counts
+    return res.status(200).json({
+      total: totalCountN || 0,
+      // Include a server-side timestamp so the client can verify freshness
+      fetchedAt: new Date().toISOString(),
+      dateFilter: dateFilter ? { year, month: month || null } : null,
+
+      // 1. Dropout Status
+      dropoutStatus: {
+        active: activeCountN || 0,
+        dropped: dropoutCountN || 0
+      },
+
+      // 2. Course Completion Status
+      courseCompletionStatus: {
+        completed: completedCountN || 0,
+        inProgress: inProgressCountN || 0,
+        notStarted: notStartedTotalN
+      },
+
+      // 3. Employment Status
+      employmentStatus: {
+        software: softwareEmpCountN || 0,
+        other: otherEmpCountN || 0
+      },
+
+      // 4. Other Status
+      otherStatus: {
+        higherStudy: higherStudyCountN || 0,
+        unemployment: unemploymentCountN || 0,
+        foreign: foreignCountN || 0
+      },
+
+      // 5. Student Type
+      studentTypes: {
+        blossom: blossomCountN || 0,
+        nonBlossom: nonBlossomCountN || 0
+      },
+
+      // 6. Course Specialization
+      courseSpecialization: {
+        fullStack: fullStackSpecCountN || 0,
+        frontEnd: frontEndSpecCountN || 0
+      }
+    });
+  } catch (error) {
+    console.error('getAnalyticsStats error:', error);
+    return res.status(500).json({ message: 'Error retrieving analytics stats.' });
+  }
+};
+
+// 10. Dashboard Stats — efficient count queries
 exports.getStats = async (req, res) => {
   try {
+    // Use a short 5-second cache window to reduce DB load while still serving near-live data.
+    // The cache is explicitly invalidated in updateAdminColumns after each student update.
     const cachedStats = adminCache.get('dashboard_stats');
     if (cachedStats) return res.status(200).json(cachedStats);
 
@@ -452,22 +741,119 @@ exports.getStats = async (req, res) => {
       { count: totalCount },
       { count: pendingCount },
       { count: dropoutCount },
-      { count: lowAltCount }
+      { count: lowAltCount },
+      
+      // Pie 1: Completed vs Dropped Out
+      { count: completedCount },
+      
+      // Pie 2: Course splits (Non-Blossom)
+      { count: fullStackCount },
+      { count: frontEndCount },
+      
+      // Pie 3: Employment status
+      { count: employedCount },
+      { count: internshipCount },
+      { count: inTrainingCount },
+      { count: higherStudiesCount },
+      { count: unemployedCount },
+      
+      // Pie 4: Student Type
+      { count: blossomCount },
+      { count: nonBlossomCount },
+
+      // NEW Pie 2: Course Specialization splits
+      { count: fullStackSpecCount },
+      { count: frontEndSpecCount },
+
+      // NEW Pie 3: Employment status splits
+      { count: softwareEmpCount },
+      { count: otherEmpCount },
+
+      // NEW Pie 4: Other status splits
+      { count: higherStudyCount },
+      { count: unemploymentCount },
+      { count: foreignCount }
     ] = await Promise.all([
       supabase.from('students').select('*', { count: 'exact', head: true }),
       supabase.from('edit_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('students').select('*', { count: 'exact', head: true }).eq('dropout_status', true),
-      supabase.from('students').select('*', { count: 'exact', head: true }).eq('low_attendance_status', true)
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('low_attendance_status', true),
+      
+      // Pie 1: Completed vs Dropped Out
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('dropout_status', false).in('admin_col1_val', ['Employed', 'Internship', 'In Training', 'Higher Studies']),
+      
+      // Pie 2: Course splits
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('course_name', 'Full Stack Developer'),
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('course_name', 'Front End Developer'),
+      
+      // Pie 3: Employment status
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('admin_col1_val', 'Employed'),
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('admin_col1_val', 'Internship'),
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('admin_col1_val', 'In Training'),
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('admin_col1_val', 'Higher Studies'),
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('admin_col1_val', 'Unemployed'),
+      
+      // Pie 4: Student Type
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('student_type', 'blossom'),
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('student_type', 'non_blossom'),
+
+      // NEW Pie 2: Course Specialization splits
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('course_specialization', 'Full Stack Development'),
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('course_specialization', 'Front End'),
+
+      // NEW Pie 3: Employment status splits
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('employment_status', 'Software Industry Employment'),
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('employment_status', 'Other Industry Employment'),
+
+      // NEW Pie 4: Other status splits
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('other_status', 'Higher Study'),
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('other_status', 'Unemployment'),
+      supabase.from('students').select('*', { count: 'exact', head: true }).eq('other_status', 'Foreign')
     ]);
 
     const stats = {
       total: totalCount || 0,
       pendingRequests: pendingCount || 0,
       dropouts: dropoutCount || 0,
-      lowAlternance: lowAltCount || 0
+      lowAlternance: lowAltCount || 0,
+      
+      charts: {
+        completedVsDropped: {
+          completed: completedCount || 0,
+          dropped: dropoutCount || 0
+        },
+        courses: {
+          fullStack: fullStackCount || 0,
+          frontEnd: frontEndCount || 0
+        },
+        employment: {
+          employed: employedCount || 0,
+          internship: internshipCount || 0,
+          inTraining: inTrainingCount || 0,
+          higherStudies: higherStudiesCount || 0,
+          unemployed: unemployedCount || 0
+        },
+        studentTypes: {
+          blossom: blossomCount || 0,
+          nonBlossom: nonBlossomCount || 0
+        },
+        courseSpecialization: {
+          fullStack: fullStackSpecCount || 0,
+          frontEnd: frontEndSpecCount || 0
+        },
+        employmentStatus: {
+          software: softwareEmpCount || 0,
+          other: otherEmpCount || 0
+        },
+        otherStatus: {
+          higherStudy: higherStudyCount || 0,
+          unemployment: unemploymentCount || 0,
+          foreign: foreignCount || 0
+        }
+      }
     };
 
-    adminCache.set('dashboard_stats', stats, 60); // Cache stats for 60 seconds
+    adminCache.set('dashboard_stats', stats, 5); // Short 5s cache; invalidated on every student update
 
     return res.status(200).json(stats);
   } catch (error) {

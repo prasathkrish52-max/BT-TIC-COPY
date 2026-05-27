@@ -64,9 +64,11 @@ const initDb = async () => {
       district TEXT,
       bank_name TEXT,
       branch TEXT,
+      branch_name TEXT,
       branch_code TEXT,
       account_no TEXT,
       beneficiary_name TEXT,
+      blossom_trust_amount REAL DEFAULT 0,
       photo_url TEXT,
       profile_status TEXT DEFAULT 'draft' CHECK(profile_status IN ('draft', 'submitted', 'pending_edit', 'approved_edit')),
       admin_col1_val TEXT,
@@ -74,8 +76,21 @@ const initDb = async () => {
       admin_col3_val REAL,
       dropout_reason TEXT,
       dropout_date TEXT,
+      dropout_status BOOLEAN DEFAULT FALSE,
       low_alternance_reason TEXT,
       low_alternance_hours INTEGER,
+      attendance_percentage REAL,
+      low_attendance_status BOOLEAN DEFAULT FALSE,
+      last_attendance_month TEXT,
+      student_type TEXT DEFAULT 'blossom' CHECK(student_type IN ('blossom', 'non_blossom')),
+      course_name TEXT CHECK(course_name IN ('Full Stack Developer', 'Front End Developer')),
+      course_specialization TEXT,
+      employment_status TEXT,
+      other_status TEXT,
+      course_completion_status TEXT CHECK(course_completion_status IN ('Completed', 'In Progress', 'Not Started')),
+      batch TEXT,
+      batch_year INTEGER,
+      email TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -91,6 +106,20 @@ const initDb = async () => {
       status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Create attendance_history table
+  await runQuery(`
+    CREATE TABLE IF NOT EXISTS attendance_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      student_id INTEGER NOT NULL,
+      month TEXT NOT NULL,
+      year INTEGER NOT NULL,
+      attendance_percentage REAL,
+      uploaded_file TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
     )
   `);
@@ -133,11 +162,39 @@ const initDb = async () => {
     );
   }
 
-  // Seed mock students if table is empty
+  // Auto-seed is DISABLED — import real students via the Admin Excel upload.
+  // To re-enable mock data, uncomment the block below.
+  /*
   const studentCount = await getQuery('SELECT COUNT(*) as count FROM students');
   if (studentCount.count === 0) {
     console.log('Seeding mock students. This may take a few seconds...');
     await seedMockStudents();
+  }
+  */
+
+  // Ensure table migration for new fields (course_specialization, employment_status, other_status, email)
+  const columns = await allQuery('PRAGMA table_info(students);');
+  const columnNames = columns.map(c => c.name);
+
+  if (!columnNames.includes('course_specialization')) {
+    console.log('Migrating: Adding course_specialization column to students table...');
+    await runQuery('ALTER TABLE students ADD COLUMN course_specialization TEXT;');
+  }
+  if (!columnNames.includes('employment_status')) {
+    console.log('Migrating: Adding employment_status column to students table...');
+    await runQuery('ALTER TABLE students ADD COLUMN employment_status TEXT;');
+  }
+  if (!columnNames.includes('other_status')) {
+    console.log('Migrating: Adding other_status column to students table...');
+    await runQuery('ALTER TABLE students ADD COLUMN other_status TEXT;');
+  }
+  if (!columnNames.includes('email')) {
+    console.log('Migrating: Adding email column to students table...');
+    await runQuery('ALTER TABLE students ADD COLUMN email TEXT;');
+  }
+  if (!columnNames.includes('course_completion_status')) {
+    console.log('Migrating: Adding course_completion_status column to students table...');
+    await runQuery("ALTER TABLE students ADD COLUMN course_completion_status TEXT CHECK(course_completion_status IN ('Completed', 'In Progress', 'Not Started'));");
   }
 
   console.log('Database initialization complete.');
@@ -250,18 +307,43 @@ const seedMockStudents = async () => {
         lowAlternanceHours = Math.floor(10 + Math.random() * 20); // 10 to 30 hours (low alternance, standard is e.g. 40+)
       }
 
+      // Student Type & Course & Batch
+      const studentType = Math.random() < 0.25 ? 'non_blossom' : 'blossom';
+      const courseName = studentType === 'non_blossom' 
+        ? (Math.random() < 0.5 ? 'Full Stack Developer' : 'Front End Developer') 
+        : null;
+      const batchYear = 2024 + Math.floor(Math.random() * 3);
+      const batch = `Unicom TIC Class of ${batchYear}`;
+
+      const dbBank = studentType === 'blossom' ? bank : null;
+      const dbBranch = studentType === 'blossom' ? branch : null;
+      const dbBranchName = studentType === 'blossom' ? `${branch} Branch` : null;
+      const dbBranchCode = studentType === 'blossom' ? branchCode : null;
+      const dbAccountNo = studentType === 'blossom' ? accountNo : null;
+      const dbBeneficiaryName = studentType === 'blossom' ? beneficiaryName : null;
+      const dbBlossomTrustAmount = studentType === 'blossom' ? (Math.random() < 0.5 ? 5000 : 10000) : 0;
+
+      const dbDropoutReason = studentType === 'blossom' ? dropoutReason : null;
+      const dbDropoutDate = studentType === 'blossom' ? dropoutDate : null;
+      const dbDropoutStatus = studentType === 'blossom' && dropoutReason !== null;
+
+      const dbLowAlternanceReason = studentType === 'blossom' ? lowAlternanceReason : null;
+      const dbLowAlternanceHours = studentType === 'blossom' ? lowAlternanceHours : null;
+
       await runQuery(
         `INSERT INTO students (
           user_id, ut_no, full_name, phone_number, nic_number, district, bank_name,
-          branch, branch_code, account_no, beneficiary_name, profile_status,
+          branch, branch_name, branch_code, account_no, beneficiary_name, blossom_trust_amount, profile_status,
           admin_col1_val, admin_col2_val, admin_col3_val,
-          dropout_reason, dropout_date, low_alternance_reason, low_alternance_hours
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          dropout_reason, dropout_date, dropout_status, low_alternance_reason, low_alternance_hours,
+          student_type, course_name, batch, batch_year
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          userId, utNo, fullName, phoneNo, nicNo, district, bank,
-          branch, branchCode, accountNo, beneficiaryName, status,
+          userId, utNo, fullName, phoneNo, nicNo, district, dbBank,
+          dbBranch, dbBranchName, dbBranchCode, dbAccountNo, dbBeneficiaryName, dbBlossomTrustAmount, status,
           currentStatus, company, salary,
-          dropoutReason, dropoutDate, lowAlternanceReason, lowAlternanceHours
+          dbDropoutReason, dbDropoutDate, dbDropoutStatus ? 1 : 0, dbLowAlternanceReason, dbLowAlternanceHours,
+          studentType, courseName, batch, batchYear
         ]
       );
     }

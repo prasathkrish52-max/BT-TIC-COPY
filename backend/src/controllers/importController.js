@@ -14,19 +14,23 @@ exports.downloadSample = async (req, res) => {
       'Phone Number',
       'NIC Number',
       'District',
+      'Email Address',
       'Bank Name',
       'Branch Name',
       'Branch Code',
       'Account Number',
       'Beneficiary Name',
-      'Blossom Trust Amount'
+      'Blossom Trust Amount',
+      'Course Specialization',
+      'Employment Status',
+      'Other Status'
     ]);
 
     // 3 sample rows so users know the expected format
     const samples = [
-      ['TIC-2026-001', 'Kasun Perera',       '0771234567', '199012345678', 'Colombo',      'Bank of Ceylon',  'Colombo Main Branch',  '001', '12345678901', 'Kasun Perera',       15000],
-      ['TIC-2026-002', 'Nimasha Silva',       '0712345678', '199512367890', 'Gampaha',      'Peoples Bank',    'Gampaha Branch',       '045', '98765432101', 'Nimasha Silva',      12000],
-      ['TIC-2026-003', 'Ravindu Fernando',    '0761234567', '200001234567', 'Kandy',        'Sampath Bank',    'Kandy City Branch',    '012', '11223344556', 'Ravindu Fernando',   18000],
+      ['TIC-2026-001', 'Kasun Perera',       '0771234567', '199012345678', 'Colombo',      'kasun@gmail.com',   'Bank of Ceylon',  'Colombo Main Branch',  '001', '12345678901', 'Kasun Perera',       15000, 'Full Stack Development', 'Software Industry Employment', ''],
+      ['TIC-2026-002', 'Nimasha Silva',       '0712345678', '199512367890', 'Gampaha',      'nimasha@gmail.com', 'Peoples Bank',    'Gampaha Branch',       '045', '98765432101', 'Nimasha Silva',      12000, 'Front End', 'Software Industry Employment', ''],
+      ['TIC-2026-003', 'Ravindu Fernando',    '0761234567', '200001234567', 'Kandy',        'ravindu@gmail.com', 'Sampath Bank',    'Kandy City Branch',    '012', '11223344556', 'Ravindu Fernando',   18000, 'Full Stack Development', 'Other Industry Employment', ''],
     ];
     samples.forEach(row => sheet.addRow(row));
 
@@ -111,6 +115,10 @@ exports.importExcel = async (req, res) => {
     const dropDateCol = getColIndex(['dropout date']);
     const altReasonCol = getColIndex(['low alternance reason']);
     const altHoursCol = getColIndex(['low alternance hours', 'alternance hours']);
+    const courseSpecCol = getColIndex(['course specialization', 'course_specialization', 'specialization']);
+    const empStatusCol = getColIndex(['employment status', 'employment_status']);
+    const otherStatusCol = getColIndex(['other status', 'other_status']);
+    const emailCol = getColIndex(['email', 'email address', 'email_address']);
 
     if (!nameCol) {
       return res.status(400).json({ message: 'Name column is required but was not found in the sheet.' });
@@ -181,7 +189,11 @@ exports.importExcel = async (req, res) => {
         dropoutReason: dropReasonCol ? getCellValue(row.getCell(dropReasonCol)).trim() || null : null,
         dropoutDate: dropDateCol ? getCellValue(row.getCell(dropDateCol)).trim() || null : null,
         lowAlternanceReason: altReasonCol ? getCellValue(row.getCell(altReasonCol)).trim() || null : null,
-        lowAlternanceHours: altHoursCol ? parseInt(getCellValue(row.getCell(altHoursCol)), 10) || null : null
+        lowAlternanceHours: altHoursCol ? parseInt(getCellValue(row.getCell(altHoursCol)), 10) || null : null,
+        courseSpecialization: courseSpecCol ? getCellValue(row.getCell(courseSpecCol)).trim() || null : null,
+        employmentStatus: empStatusCol ? getCellValue(row.getCell(empStatusCol)).trim() || null : null,
+        otherStatus: otherStatusCol ? getCellValue(row.getCell(otherStatusCol)).trim() || null : null,
+        email: emailCol ? getCellValue(row.getCell(emailCol)).trim().toLowerCase() || null : null
       });
     }
 
@@ -225,6 +237,10 @@ exports.importExcel = async (req, res) => {
             dropout_date: s.dropoutDate,
             low_alternance_reason: s.lowAlternanceReason,
             low_alternance_hours: s.lowAlternanceHours,
+            course_specialization: s.courseSpecialization,
+            employment_status: s.employmentStatus,
+            other_status: s.otherStatus,
+            email: s.email,
             profile_status: 'submitted',
             updated_at: new Date().toISOString()
           })
@@ -254,9 +270,20 @@ exports.importExcel = async (req, res) => {
 
           userId = authData.user.id;
 
-          await supabase.from('users').insert([{
-            id: userId, email, role: 'student'
-          }]);
+          // In SQLite mode, createUser already inserts into users (with password).
+          // In Supabase mode, createUser only creates in auth.users, so we insert manually.
+          // Check first to avoid duplicate / NOT NULL constraint errors.
+          const { data: alreadyInPublic } = await supabase
+            .from('users')
+            .select('id')
+            .eq('id', userId)
+            .maybeSingle();
+
+          if (!alreadyInPublic) {
+            await supabase.from('users').insert([{
+              id: userId, email, role: 'student'
+            }]);
+          }
         }
 
         // Insert student profile
@@ -281,7 +308,11 @@ exports.importExcel = async (req, res) => {
           dropout_reason: s.dropoutReason,
           dropout_date: s.dropoutDate,
           low_alternance_reason: s.lowAlternanceReason,
-          low_alternance_hours: s.lowAlternanceHours
+          low_alternance_hours: s.lowAlternanceHours,
+          course_specialization: s.courseSpecialization,
+          employment_status: s.employmentStatus,
+          other_status: s.otherStatus,
+          email: s.email
         }]);
         insertedCount++;
       }

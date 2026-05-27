@@ -42,7 +42,8 @@ exports.updateProfile = async (req, res) => {
   const {
     utNo, fullName, phoneNo, nicNumber, district,
     bankName, branch, branchName, branchCode, accountNo, beneficiaryName,
-    isSubmit
+    isSubmit, courseName, courseSpecialization, employmentStatus, otherStatus,
+    email
   } = req.body;
 
   try {
@@ -63,40 +64,85 @@ exports.updateProfile = async (req, res) => {
       });
     }
 
+    const isBlossom = student.student_type === 'blossom';
+
     // Validation on submit
     if (isSubmit) {
-      if (!fullName || !phoneNo || !nicNumber || !district || !bankName || !branch || !branchName || !branchCode || !accountNo || !beneficiaryName) {
-        return res.status(400).json({ message: 'All profile fields are required for submission.' });
+      if (isBlossom) {
+        if (!fullName || !phoneNo || !nicNumber || !district || !bankName || !branch || !branchName || !branchCode || !accountNo || !beneficiaryName) {
+          return res.status(400).json({ message: 'All profile fields are required for submission.' });
+        }
+        if (!/^\d+$/.test(accountNo)) {
+          return res.status(400).json({ message: 'Account Number must contain only digits.' });
+        }
+        if (!/^\d+$/.test(branchCode)) {
+          return res.status(400).json({ message: 'Branch Code must contain only digits.' });
+        }
+      } else {
+        if (!fullName || !phoneNo || !nicNumber || !district) {
+          return res.status(400).json({ message: 'Personal profile and district details are required for submission.' });
+        }
+        if (courseName && courseName !== 'Full Stack Developer' && courseName !== 'Front End Developer') {
+          return res.status(400).json({ message: 'Invalid course selection.' });
+        }
       }
-      if (!/^\+?[\d\s-]{9,15}$/.test(phoneNo)) {
+      if (phoneNo && !/^\+?[\d\s-]{9,15}$/.test(phoneNo)) {
         return res.status(400).json({ message: 'Invalid phone number format.' });
-      }
-      if (!/^\d+$/.test(accountNo)) {
-        return res.status(400).json({ message: 'Account Number must contain only digits.' });
-      }
-      if (!/^\d+$/.test(branchCode)) {
-        return res.status(400).json({ message: 'Branch Code must contain only digits.' });
       }
     } else {
       if (phoneNo && !/^\+?[\d\s-]{9,15}$/.test(phoneNo)) {
         return res.status(400).json({ message: 'Invalid phone number format.' });
       }
-      if (accountNo && !/^\d+$/.test(accountNo)) {
-        return res.status(400).json({ message: 'Account Number must contain only digits.' });
+      if (isBlossom) {
+        if (accountNo && !/^\d+$/.test(accountNo)) {
+          return res.status(400).json({ message: 'Account Number must contain only digits.' });
+        }
+        if (branchCode && !/^\d+$/.test(branchCode)) {
+          return res.status(400).json({ message: 'Branch Code must contain only digits.' });
+        }
       }
-      if (branchCode && !/^\d+$/.test(branchCode)) {
-        return res.status(400).json({ message: 'Branch Code must contain only digits.' });
+    }
+
+    // Email validation and duplicate checking for BOTH Blossom Trust and Non-Blossom Trust students
+    let trimmedEmail = undefined;
+    if (email !== undefined) {
+      if (email === '') {
+        if (isSubmit) {
+          return res.status(400).json({ message: 'Email address is required for submission.' });
+        }
+        trimmedEmail = null;
+      } else {
+        const tempEmail = email.trim().toLowerCase();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(tempEmail)) {
+          return res.status(400).json({ message: 'Invalid email address format.' });
+        }
+        
+        // Check duplicate email
+        const { data: existingEmail } = await supabase
+          .from('students')
+          .select('id')
+          .eq('email', tempEmail)
+          .neq('id', student.id)
+          .maybeSingle();
+
+        if (existingEmail) {
+          return res.status(400).json({ message: 'This email address is already in use.' });
+        }
+        trimmedEmail = tempEmail;
       }
+    } else if (isSubmit && !student.email) {
+      return res.status(400).json({ message: 'Email address is required for submission.' });
     }
 
     // Check UT No uniqueness
     if (utNo && utNo !== student.ut_no) {
       const { data: existingUT } = await supabase
-        .from('students')
-        .select('id')
-        .eq('ut_no', utNo)
-        .neq('id', student.id)
-        .maybeSingle();
+          .from('students')
+          .select('id')
+          .eq('ut_no', utNo)
+          .neq('id', student.id)
+          .maybeSingle();
 
       if (existingUT) {
         return res.status(400).json({ message: 'This UT No is already in use by another student.' });
@@ -105,23 +151,37 @@ exports.updateProfile = async (req, res) => {
 
     const nextStatus = isSubmit ? 'submitted' : student.profile_status;
 
+    const updatePayload = {
+      ut_no: utNo || student.ut_no,
+      full_name: fullName || student.full_name,
+      phone_number: phoneNo || student.phone_number,
+      nic_number: nicNumber || student.nic_number,
+      district: district || student.district,
+      course_specialization: courseSpecialization !== undefined ? courseSpecialization : student.course_specialization,
+      employment_status: employmentStatus !== undefined ? employmentStatus : student.employment_status,
+      other_status: otherStatus !== undefined ? otherStatus : student.other_status,
+      profile_status: nextStatus,
+      updated_at: new Date().toISOString()
+    };
+
+    if (isBlossom) {
+      updatePayload.bank_name = bankName || student.bank_name;
+      updatePayload.branch = branch || student.branch;
+      updatePayload.branch_name = branchName || student.branch_name;
+      updatePayload.branch_code = branchCode || student.branch_code;
+      updatePayload.account_no = accountNo || student.account_no;
+      updatePayload.beneficiary_name = beneficiaryName || student.beneficiary_name;
+    } else {
+      updatePayload.course_name = courseName || student.course_name;
+    }
+
+    if (trimmedEmail !== undefined) {
+      updatePayload.email = trimmedEmail;
+    }
+
     const { error: updateError } = await supabase
       .from('students')
-      .update({
-        ut_no: utNo || student.ut_no,
-        full_name: fullName || student.full_name,
-        phone_number: phoneNo || student.phone_number,
-        nic_number: nicNumber || student.nic_number,
-        district: district || student.district,
-        bank_name: bankName || student.bank_name,
-        branch: branch || student.branch,
-        branch_name: branchName || student.branch_name,
-        branch_code: branchCode || student.branch_code,
-        account_no: accountNo || student.account_no,
-        beneficiary_name: beneficiaryName || student.beneficiary_name,
-        profile_status: nextStatus,
-        updated_at: new Date().toISOString()
-      })
+      .update(updatePayload)
       .eq('id', student.id);
 
     if (updateError) throw updateError;

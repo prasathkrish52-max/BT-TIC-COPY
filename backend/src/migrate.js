@@ -147,7 +147,8 @@ async function runMigration() {
         dropout_reason: s.dropout_reason,
         dropout_date: s.dropout_date,
         low_alternance_reason: s.low_alternance_reason,
-        low_alternance_hours: s.low_alternance_hours
+        low_alternance_hours: s.low_alternance_hours,
+        email: s.email
       });
     }
 

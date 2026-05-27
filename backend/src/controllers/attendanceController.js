@@ -322,6 +322,16 @@ exports.uploadAttendance = async (req, res) => {
 
           if (studentUpdateError) throw studentUpdateError;
 
+          // Remove existing duplicate attendance for same student, month, and year if it exists
+          const { error: historyDeleteError } = await supabase
+            .from('attendance_history')
+            .delete()
+            .eq('student_id', matchedStudent.id)
+            .eq('month', cleanMonth)
+            .eq('year', cleanYear);
+
+          if (historyDeleteError) throw historyDeleteError;
+
           // Insert into history
           const { error: historyInsertError } = await supabase
             .from('attendance_history')

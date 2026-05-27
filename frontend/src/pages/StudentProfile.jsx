@@ -27,7 +27,15 @@ const StudentProfile = ({ setView }) => {
     attendance_percentage: null,
     last_attendance_month: '',
     low_attendance_status: false,
-    dropout_status: false
+    dropout_status: false,
+    student_type: 'blossom',
+    course_name: '',
+    course_specialization: '',
+    employment_status: '',
+    other_status: '',
+    batch: '',
+    batch_year: '',
+    email: ''
   });
 
   // Admin dynamic titles
@@ -112,20 +120,35 @@ const StudentProfile = ({ setView }) => {
   };
 
   // Build the payload for save/submit — includes all hybrid fields
-  const buildPayload = (isSubmit) => ({
-    utNo: profileData.ut_no,
-    fullName: profileData.full_name,
-    phoneNo: profileData.phone_number,
-    nicNumber: profileData.nic_number,
-    district: profileData.district,
-    bankName: profileData.bank_name,
-    branch: profileData.branch_name || profileData.branch, // write to both legacy + new
-    branchName: profileData.branch_name || profileData.branch,
-    branchCode: profileData.branch_code,
-    accountNo: profileData.account_no,
-    beneficiaryName: profileData.beneficiary_name,
-    isSubmit
-  });
+  const buildPayload = (isSubmit) => {
+    const payload = {
+      utNo: profileData.ut_no,
+      fullName: profileData.full_name,
+      phoneNo: profileData.phone_number,
+      nicNumber: profileData.nic_number,
+      district: profileData.district,
+      studentType: profileData.student_type,
+      courseSpecialization: profileData.course_specialization,
+      employmentStatus: profileData.employment_status,
+      otherStatus: profileData.other_status,
+      email: profileData.email,
+      isSubmit
+    };
+
+    if (profileData.student_type !== 'non_blossom') {
+      payload.bankName = profileData.bank_name;
+      payload.branch = profileData.branch_name || profileData.branch;
+      payload.branchName = profileData.branch_name || profileData.branch;
+      payload.branchCode = profileData.branch_code;
+      payload.accountNo = profileData.account_no;
+      payload.beneficiaryName = profileData.beneficiary_name;
+      payload.courseName = profileData.course_name;
+      payload.batch = profileData.batch;
+      payload.batchYear = profileData.batch_year;
+    }
+
+    return payload;
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -259,6 +282,17 @@ const StudentProfile = ({ setView }) => {
     );
   }
 
+  const isNonBlossom = profileData.student_type === 'non_blossom';
+  const showAcademic = !isNonBlossom || !!(
+    profileData.course_name ||
+    profileData.course_specialization ||
+    profileData.employment_status ||
+    profileData.other_status ||
+    profileData.admin_col1_val ||
+    profileData.admin_col2_val ||
+    profileData.admin_col3_val
+  );
+
   return (
     <div style={{ padding: '32px 16px', maxWidth: '1200px', margin: '0 auto' }}>
       
@@ -364,29 +398,31 @@ const StudentProfile = ({ setView }) => {
           </div>
 
           {/* Blossom Trust Amount — Read-Only Admin Field */}
-          <div className="glass-panel" style={{ padding: '20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <DollarSign size={16} color="hsl(var(--primary))" />
-              <h3 style={{ fontSize: '1rem' }}>Blossom Trust Amount</h3>
+          {profileData.student_type !== 'non_blossom' && (
+            <div className="glass-panel" style={{ padding: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <DollarSign size={16} color="hsl(var(--primary))" />
+                <h3 style={{ fontSize: '1rem' }}>Blossom Trust Amount</h3>
+              </div>
+              <div style={{ 
+                background: 'rgba(99, 102, 241, 0.06)', 
+                border: '1px solid rgba(99,102,241,0.2)', 
+                borderRadius: '8px', 
+                padding: '14px 16px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <span style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))' }}>Disbursement Amount:</span>
+                <span style={{ fontSize: '1.1rem', fontWeight: '700', color: 'hsl(var(--primary-hover))' }}>
+                  LKR {profileData.blossom_trust_amount ? Number(profileData.blossom_trust_amount).toLocaleString() : '0'}
+                </span>
+              </div>
+              <p style={{ fontSize: '0.72rem', color: 'hsl(var(--text-muted))', marginTop: '8px', lineHeight: '1.4' }}>
+                This amount is managed by the administrator and cannot be modified by students.
+              </p>
             </div>
-            <div style={{ 
-              background: 'rgba(99, 102, 241, 0.06)', 
-              border: '1px solid rgba(99,102,241,0.2)', 
-              borderRadius: '8px', 
-              padding: '14px 16px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}>
-              <span style={{ fontSize: '0.8rem', color: 'hsl(var(--text-secondary))' }}>Disbursement Amount:</span>
-              <span style={{ fontSize: '1.1rem', fontWeight: '700', color: 'hsl(var(--primary-hover))' }}>
-                LKR {profileData.blossom_trust_amount ? Number(profileData.blossom_trust_amount).toLocaleString() : '0'}
-              </span>
-            </div>
-            <p style={{ fontSize: '0.72rem', color: 'hsl(var(--text-muted))', marginTop: '8px', lineHeight: '1.4' }}>
-              This amount is managed by the administrator and cannot be modified by students.
-            </p>
-          </div>
+          )}
 
           {/* Admin Managed Columns (Read-Only) */}
           <div className="glass-panel" style={{ padding: '24px' }}>
@@ -396,6 +432,15 @@ const StudentProfile = ({ setView }) => {
             </div>
             
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ borderBottom: '1px solid hsla(var(--border-glass))', paddingBottom: '10px' }}>
+                <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'hsl(var(--text-secondary))', marginBottom: '4px' }}>
+                  Course Completion Status
+                </div>
+                <div style={{ fontSize: '0.95rem', fontWeight: '500' }}>
+                  {profileData.course_completion_status || 'Not Updated'}
+                </div>
+              </div>
+
               <div style={{ borderBottom: '1px solid hsla(var(--border-glass))', paddingBottom: '10px' }}>
                 <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'hsl(var(--text-secondary))', marginBottom: '4px' }}>
                   {adminTitles.admin_col1_title}
@@ -475,7 +520,9 @@ const StudentProfile = ({ setView }) => {
               {/* Profile Details section */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px', borderBottom: '1px solid hsla(var(--border-glass))', paddingBottom: '12px' }}>
                 <User size={20} color="hsl(var(--primary))" />
-                <h2 style={{ fontSize: '1.3rem' }}>Personal Profile Info</h2>
+                <h2 style={{ fontSize: '1.3rem' }}>
+                  {profileData.student_type === 'blossom' ? '🌸 Blossom Trust Student Profile' : '🎓 Non Blossom Trust Student Profile'}
+                </h2>
               </div>
 
               <div className="grid-2">
@@ -555,90 +602,195 @@ const StudentProfile = ({ setView }) => {
                 </div>
               </div>
 
-              {/* Bank details section */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '36px', marginBottom: '24px', borderBottom: '1px solid hsla(var(--border-glass))', paddingBottom: '12px' }}>
-                <Landmark size={20} color="hsl(var(--primary))" />
-                <h2 style={{ fontSize: '1.3rem' }}>Bank Account Details</h2>
-              </div>
-
-              <div className="grid-2">
+              <div className="grid-2" style={{ marginTop: '16px' }}>
                 <div className="form-group">
-                  <label className="form-label">Bank Name</label>
-                  <select
-                    name="bank_name"
-                    className="form-select"
-                    value={profileData.bank_name || ''}
-                    onChange={handleChange}
-                    disabled={isLocked}
-                    required
-                  >
-                    <option value="">Select Bank</option>
-                    {banks.map(b => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Branch Name</label>
+                  <label className="form-label">Email Address</label>
                   <input
-                    type="text"
-                    name="branch_name"
+                    type="email"
+                    name="email"
                     className="form-input"
-                    value={profileData.branch_name || profileData.branch || ''}
+                    value={profileData.email || ''}
                     onChange={handleChange}
                     disabled={isLocked}
-                    placeholder="e.g. Colombo Main Branch"
-                    required
+                    placeholder="example@gmail.com"
                   />
                 </div>
+                <div></div>
               </div>
 
-              <div className="grid-3">
-                <div className="form-group">
-                  <label className="form-label">Branch Code</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    name="branch_code"
-                    className="form-input"
-                    value={profileData.branch_code || ''}
-                    onChange={handleChange}
-                    disabled={isLocked}
-                    placeholder="e.g. 001"
-                    required
-                  />
-                </div>
+              {profileData.student_type !== 'non_blossom' && (
+                <>
+                  {/* Bank details section */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '36px', marginBottom: '24px', borderBottom: '1px solid hsla(var(--border-glass))', paddingBottom: '12px' }}>
+                    <Landmark size={20} color="hsl(var(--primary))" />
+                    <h2 style={{ fontSize: '1.3rem' }}>Bank Account Details</h2>
+                  </div>
 
-                <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                  <label className="form-label">Account Number</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    name="account_no"
-                    className="form-input"
-                    value={profileData.account_no || ''}
-                    onChange={handleChange}
-                    disabled={isLocked}
-                    placeholder="e.g. 0012345678900"
-                    required
-                  />
-                </div>
-              </div>
+                  <div className="grid-2">
+                    <div className="form-group">
+                      <label className="form-label">Bank Name</label>
+                      <select
+                        name="bank_name"
+                        className="form-select"
+                        value={profileData.bank_name || ''}
+                        onChange={handleChange}
+                        disabled={isLocked}
+                        required
+                      >
+                        <option value="">Select Bank</option>
+                        {banks.map(b => (
+                          <option key={b} value={b}>{b}</option>
+                        ))}
+                      </select>
+                    </div>
 
-              <div className="form-group">
-                <label className="form-label">Beneficiary Name (Account Holder Name)</label>
-                <input
-                  type="text"
-                  name="beneficiary_name"
-                  className="form-input"
-                  value={profileData.beneficiary_name || ''}
-                  onChange={handleChange}
-                  disabled={isLocked}
-                  placeholder="Name exactly as on bank passbook"
-                  required
-                />
-              </div>
+                    <div className="form-group">
+                      <label className="form-label">Branch Name</label>
+                      <input
+                        type="text"
+                        name="branch_name"
+                        className="form-input"
+                        value={profileData.branch_name || profileData.branch || ''}
+                        onChange={handleChange}
+                        disabled={isLocked}
+                        placeholder="e.g. Colombo Main Branch"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid-3">
+                    <div className="form-group">
+                      <label className="form-label">Branch Code</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        name="branch_code"
+                        className="form-input"
+                        value={profileData.branch_code || ''}
+                        onChange={handleChange}
+                        disabled={isLocked}
+                        placeholder="e.g. 001"
+                        required
+                      />
+                    </div>
+
+                    <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                      <label className="form-label">Account Number</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        name="account_no"
+                        className="form-input"
+                        value={profileData.account_no || ''}
+                        onChange={handleChange}
+                        disabled={isLocked}
+                        placeholder="e.g. 0012345678900"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Beneficiary Name (Account Holder Name)</label>
+                    <input
+                      type="text"
+                      name="beneficiary_name"
+                      className="form-input"
+                      value={profileData.beneficiary_name || ''}
+                      onChange={handleChange}
+                      disabled={isLocked}
+                      placeholder="Name exactly as on bank passbook"
+                      required
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* Dropdowns section for Course Specialization, Employment Status, and Other Status */}
+              {isNonBlossom && showAcademic && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '36px', marginBottom: '24px', borderBottom: '1px solid hsla(var(--border-glass))', paddingBottom: '12px' }}>
+                    <User size={20} color="hsl(var(--primary))" />
+                    <h2 style={{ fontSize: '1.3rem' }}>Academic & Employment Status</h2>
+                  </div>
+
+                  <div className="grid-3" style={{ marginBottom: '20px' }}>
+                    <div className="form-group">
+                      <label className="form-label">Course Specialization</label>
+                      <select
+                        name="course_specialization"
+                        className="form-select"
+                        value={profileData.course_specialization || ''}
+                        onChange={handleChange}
+                        disabled={isLocked}
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid hsla(var(--border-glass))',
+                          backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                          color: 'hsl(var(--text-primary))',
+                          outline: 'none'
+                        }}
+                      >
+                        <option value="">Select Specialization</option>
+                        <option value="Full Stack Development">Full Stack Development</option>
+                        <option value="Front End">Front End</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Employment Status</label>
+                      <select
+                        name="employment_status"
+                        className="form-select"
+                        value={profileData.employment_status || ''}
+                        onChange={handleChange}
+                        disabled={isLocked}
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid hsla(var(--border-glass))',
+                          backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                          color: 'hsl(var(--text-primary))',
+                          outline: 'none'
+                        }}
+                      >
+                        <option value="">Select Employment Status</option>
+                        <option value="Software Industry Employment">Software Industry Employment</option>
+                        <option value="Other Industry Employment">Other Industry Employment</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Other Status</label>
+                      <select
+                        name="other_status"
+                        className="form-select"
+                        value={profileData.other_status || ''}
+                        onChange={handleChange}
+                        disabled={isLocked}
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid hsla(var(--border-glass))',
+                          backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                          color: 'hsl(var(--text-primary))',
+                          outline: 'none'
+                        }}
+                      >
+                        <option value="">Select Other Status</option>
+                        <option value="Higher Study">Higher Study</option>
+                        <option value="Unemployment">Unemployment</option>
+                        <option value="Foreign">Foreign</option>
+                      </select>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Form buttons */}
               {!isLocked && (

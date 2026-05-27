@@ -26,3 +26,16 @@ CREATE TABLE IF NOT EXISTS public.attendance_history (
   uploaded_file TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 6. Add course_specialization, employment_status, other_status columns to students table
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS course_specialization TEXT;
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS employment_status TEXT;
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS other_status TEXT;
+
+-- 7. Add email column to students table (for Non-Blossom students)
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS email TEXT;
+
+-- 8. Add course_completion_status column to students table
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS course_completion_status TEXT CHECK(course_completion_status IN ('Completed', 'In Progress', 'Not Started'));
+
+

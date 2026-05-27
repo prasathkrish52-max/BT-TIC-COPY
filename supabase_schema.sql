@@ -38,6 +38,15 @@ CREATE TABLE public.students (
   attendance_percentage NUMERIC,
   low_attendance_status BOOLEAN DEFAULT FALSE,
   last_attendance_month TEXT,
+  student_type TEXT DEFAULT 'blossom' CHECK(student_type IN ('blossom', 'non_blossom')) NOT NULL,
+  course_name TEXT CHECK(course_name IN ('Full Stack Developer', 'Front End Developer')) NULL,
+  course_specialization TEXT NULL,
+  employment_status TEXT NULL,
+  other_status TEXT NULL,
+  course_completion_status TEXT CHECK(course_completion_status IN ('Completed', 'In Progress', 'Not Started')) NULL,
+  batch TEXT NULL,
+  batch_year INTEGER NULL,
+  email TEXT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

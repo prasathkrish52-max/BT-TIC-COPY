@@ -9,6 +9,8 @@ const Register = ({ setView }) => {
   const [utNo, setUtNo] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [studentType, setStudentType] = useState('blossom');
+  const [courseName, setCourseName] = useState('Full Stack Developer');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -16,7 +18,7 @@ const Register = ({ setView }) => {
     if (!fullName || !utNo || !email || !password) return;
 
     setIsLoading(true);
-    const result = await register(email, password, fullName, utNo);
+    const result = await register(email, password, fullName, utNo, studentType, studentType === 'non_blossom' ? courseName : '');
     setIsLoading(false);
 
     if (result.success) {
@@ -71,6 +73,52 @@ const Register = ({ setView }) => {
               required
             />
           </div>
+
+          <div className="form-group">
+            <label className="form-label">Student Type</label>
+            <select
+              className="form-select"
+              value={studentType}
+              onChange={(e) => setStudentType(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                border: '1px solid hsla(var(--border-glass))',
+                backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                color: 'hsl(var(--text-primary))',
+                outline: 'none'
+              }}
+              required
+            >
+              <option value="blossom">Blossom Trust Student</option>
+              <option value="non_blossom">Non-Blossom Student</option>
+            </select>
+          </div>
+
+          {studentType === 'non_blossom' && (
+            <div className="form-group">
+              <label className="form-label">Select Course</label>
+              <select
+                className="form-select"
+                value={courseName}
+                onChange={(e) => setCourseName(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid hsla(var(--border-glass))',
+                  backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                  color: 'hsl(var(--text-primary))',
+                  outline: 'none'
+                }}
+                required
+              >
+                <option value="Full Stack Developer">Full Stack Developer</option>
+                <option value="Front End Developer">Front End Developer</option>
+              </select>
+            </div>
+          )}
 
           <div className="form-group">
             <label className="form-label">Email Address</label>
